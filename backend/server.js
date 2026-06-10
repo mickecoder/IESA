@@ -1,11 +1,12 @@
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
-app.use(cors());
+
 const app = express();
 
+// Enable CORS flexibly to allow both local development and production frontends
 app.use(cors({
-    origin: 'http://localhost:3000',
+    origin: true,
     credentials: true
 }));
 
@@ -23,6 +24,14 @@ const db = mysql.createConnection({
 db.connect(err => {
     if (err) console.error("Database connection failed:", err);
     else console.log("✅ Connected to MySQL Database securely.");
+});
+
+// Welcome message for the root URL to verify deployment status
+app.get('/', (req, res) => {
+    res.json({ 
+        status: "success", 
+        message: "Instructor Evaluation System API is running smoothly!" 
+    });
 });
 
 // ==========================================
@@ -66,7 +75,7 @@ app.post('/api/login', (req, res) => {
         }
         
         if (results.length > 0) {
-            const userMatch = results[0];
+            const userMatch = results;
             const { password: _, ...userWithoutPassword } = userMatch;
             res.json({ success: true, user: userWithoutPassword });
         } else {
@@ -78,7 +87,6 @@ app.post('/api/login', (req, res) => {
 // ==========================================
 // --- 2. STUDENT MANAGEMENT ---
 // ==========================================
-
 app.get('/api/admin/students', (req, res) => {
     const sql = `
         SELECT 
@@ -376,7 +384,7 @@ app.post('/api/admin/instructors', (req, res) => {
     const userSql = "INSERT INTO users (name, email_or_id, password, role) VALUES (?, ?, ?, 'instructor')";
     db.query(userSql, [name, email, password], (err, userResult) => {
         if (err) return res.status(500).json({ error: "Failed to create user account" });
-        
+         
         const userId = userResult.insertId;
         const insSql = "INSERT INTO instructor (name, email, password, user_id, dept_id) VALUES (?, ?, ?, ?, ?)";
         db.query(insSql, [name, email, password, userId, dept_id || null], (err) => {
@@ -513,10 +521,10 @@ app.get('/api/admin/performance', (req, res) => {
 app.get('/api/instructor/performance/:instructorId', (req, res) => {
     const { instructorId } = req.params;
     db.query('SELECT user_id FROM instructor WHERE instructor_id = ?', [instructorId], (err, mapRows) => {
-        const userFk = (mapRows && mapRows[0]) ? mapRows[0].user_id : parseInt(instructorId, 10);
+        const userFk = (mapRows && mapRows) ? mapRows.user_id : parseInt(instructorId, 10);
         const statsSql = `SELECT AVG(e.rating) as overall_rating, COUNT(DISTINCT e.student_id) as total_evaluations FROM evaluations e WHERE e.instructor_id = ?`;
         db.query(statsSql, [userFk], (err, statsResults) => {
-            res.json({ summary: statsResults[0] || { overall_rating: 0, total_evaluations: 0 }, comments: [] });
+            res.json({ summary: statsResults || { overall_rating: 0, total_evaluations: 0 }, comments: [] });
         });
     });
 });
@@ -550,7 +558,6 @@ app.get('/api/courses/:id/distribution', (req, res) => {
             return res.status(500).json({ error: err.message });
         }
 
-        // build counts for ratings 1..5
         const counts = { 1:0, 2:0, 3:0, 4:0, 5:0 };
         let total = 0;
         (rows || []).forEach(r => {
@@ -572,10 +579,8 @@ app.get('/api/courses/:id/distribution', (req, res) => {
 });
 
 // ==========================================
-// --- 11. EVALUATIONS (FIXED - NO FOREIGN KEY ISSUE) ---
+// --- 11. EVALUATIONS ---
 // ==========================================
-
-// Check if already evaluated
 app.get('/api/evaluations/check', (req, res) => {
     const { student_id, course_id } = req.query;
     
@@ -593,7 +598,6 @@ app.get('/api/evaluations/check', (req, res) => {
     });
 });
 
-// Setup evaluation form
 app.get('/api/setup-eval/:courseId', (req, res) => {
     const { courseId } = req.params;
     
@@ -616,7 +620,7 @@ app.get('/api/setup-eval/:courseId', (req, res) => {
         }
         
         if (courseResult.length === 0) {
-            return res.status(404).json({ message: "Course not found" });
+            return res.status(404).message("Course not found");
         }
         
         const criteriaSql = "SELECT id, question FROM criteria ORDER BY id";
@@ -627,14 +631,13 @@ app.get('/api/setup-eval/:courseId', (req, res) => {
             }
             
             res.json({ 
-                course: courseResult[0], 
+                course: courseResult, 
                 questions: criteriaResults 
             });
         });
     });
 });
 
-// Submit evaluation (with NULL instructor_id to avoid foreign key issues)
 app.post('/api/evaluations/submit', (req, res) => {
     const { student_id, course_id, ratings, comments } = req.body;
 
@@ -649,7 +652,6 @@ app.post('/api/evaluations/submit', (req, res) => {
         return res.status(400).json({ error: "Invalid student or course identifier." });
     }
 
-    // Check if already evaluated
     const checkSql = "SELECT id FROM evaluations WHERE student_id = ? AND course_id = ? LIMIT 1";
     db.query(checkSql, [parsedStudentId, parsedCourseId], (checkErr, checkRows) => {
         if (checkErr) {
@@ -667,14 +669,13 @@ app.post('/api/evaluations/submit', (req, res) => {
             WHERE c.id = ?
             LIMIT 1
         `;
-
         db.query(instructorSql, [parsedCourseId], (instErr, instRows) => {
             if (instErr) {
                 console.error('FETCH INSTRUCTOR ID ERROR:', instErr);
                 return res.status(500).json({ error: 'Failed to determine instructor for this course.' });
             }
 
-            const finalInstructorId = instRows && instRows[0] ? instRows[0].instructor_id : null;
+            const finalInstructorId = instRows && instRows ? instRows.instructor_id : null;
 
             const values = Object.entries(ratings).map(([criteria_id, rating]) => [
                 parsedStudentId,
@@ -700,7 +701,6 @@ app.post('/api/evaluations/submit', (req, res) => {
 // ==========================================
 // --- 12. SYSTEM USERS MANAGEMENT ---
 // ==========================================
-
 app.get('/api/admin/system-users', (req, res) => {
     const queryUsers = `
         SELECT id, name, email_or_id, password, role 
@@ -817,7 +817,6 @@ app.delete('/api/admin/system-users/:id/:role', (req, res) => {
 // ==========================================
 // --- 13. INSTRUCTOR RESULTS ---
 // ==========================================
-
 app.get('/api/instructor/results', (req, res) => {
     const userId = parseInt(req.query.user_id, 10);
     
@@ -841,9 +840,8 @@ app.get('/api/instructor/results', (req, res) => {
             return res.status(404).json({ error: "Instructor profile not found for this user" });
         }
         
-        const instructor = instructorRows[0];
+        const instructor = instructorRows;
         const instructorId = instructor.instructor_id;
-        
         const coursesSql = `
             SELECT 
                 c.id as course_id,
@@ -858,7 +856,6 @@ app.get('/api/instructor/results', (req, res) => {
             GROUP BY c.id, c.course_name, c.course_code
             ORDER BY c.course_name ASC
         `;
-        
         db.query(coursesSql, [instructorId], (err, courseResults) => {
             if (err) {
                 console.error("Courses fetch error:", err);
@@ -881,8 +878,8 @@ app.get('/api/instructor/results', (req, res) => {
                     console.error("Summary error:", err);
                     return res.status(500).json({ error: err.message });
                 }
-                
-                const summary = summaryResults[0] || { 
+            
+                const summary = summaryResults || { 
                     totalEvaluations: 0, 
                     averageRating: 0, 
                     uniqueStudents: 0, 
@@ -900,120 +897,39 @@ app.get('/api/instructor/results', (req, res) => {
 });
 
 // ==========================================
-// --- SEMESTER RESET / BULK UNLINK FEATURE ---
+// --- 14. SYSTEM RESET / SEMESTER CONTROLS ---
 // ==========================================
-
-// 1. Unlink all instructors from courses
-app.post('/api/admin/reset/instructor-courses', (req, res) => {
-    const sql = "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Reset instructor-courses error:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Successfully unlinked ${result.affectedRows} instructor-course relationships`,
-            affectedRows: result.affectedRows
-        });
-    });
-});
-
-// 2. Unlink all courses from sections
-app.post('/api/admin/reset/course-sections', (req, res) => {
-    const sql = "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Reset course-sections error:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Successfully unlinked ${result.affectedRows} course-section relationships`,
-            affectedRows: result.affectedRows
-        });
-    });
-});
-
-// 3. Unlink all students from sections
-app.post('/api/admin/reset/student-sections', (req, res) => {
-    const sql = "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Reset student-sections error:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Successfully unlinked ${result.affectedRows} student-section relationships`,
-            affectedRows: result.affectedRows
-        });
-    });
-});
-
-// 4. Complete Semester Reset (all three operations)
-app.post('/api/admin/reset/semester', async (req, res) => {
-    const results = {
-        instructorCourses: 0,
-        courseSections: 0,
-        studentSections: 0
-    };
-    
-    try {
-        // Unlink instructors from courses
-        const [instResult] = await db.promise().query("UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL");
-        results.instructorCourses = instResult.affectedRows;
-        
-        // Unlink courses from sections
-        const [courseResult] = await db.promise().query("UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL");
-        results.courseSections = courseResult.affectedRows;
-        
-        // Unlink students from sections
-        const [studentResult] = await db.promise().query("UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL");
-        results.studentSections = studentResult.affectedRows;
-        
-        res.json({ 
-            success: true, 
-            message: "Semester reset completed successfully!",
-            details: results
-        });
-    } catch (err) {
-        console.error("Semester reset error:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// 5. Get current linkage statistics
 app.get('/api/admin/reset/stats', (req, res) => {
     const queries = {
+        evaluations: "SELECT COUNT(*) as count FROM evaluations",
         instructorCourses: "SELECT COUNT(*) as count FROM courses WHERE instructor_id IS NOT NULL",
         courseSections: "SELECT COUNT(*) as count FROM courses WHERE section_id IS NOT NULL",
         studentSections: "SELECT COUNT(*) as count FROM users WHERE role = 'student' AND section_id IS NOT NULL"
     };
     
-    db.query(queries.instructorCourses, (err, instResult) => {
+    db.query(queries.evaluations, (err, evalResult) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        db.query(queries.courseSections, (err, courseResult) => {
+        db.query(queries.instructorCourses, (err, instResult) => {
             if (err) return res.status(500).json({ error: err.message });
             
-            db.query(queries.studentSections, (err, studentResult) => {
+            db.query(queries.courseSections, (err, courseResult) => {
                 if (err) return res.status(500).json({ error: err.message });
                 
-                res.json({
-                    instructorCoursesLinked: instResult[0].count,
-                    courseSectionsLinked: courseResult[0].count,
-                    studentSectionsLinked: studentResult[0].count
+                db.query(queries.studentSections, (err, studentResult) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({
+                        evaluations: evalResult.count,
+                        instructorCoursesLinked: instResult.count,
+                        courseSectionsLinked: courseResult.count,
+                        studentSectionsLinked: studentResult.count
+                    });
                 });
             });
         });
     });
 });
-// ==========================================
-// --- SEMESTER RESET / BULK UNLINK FEATURE ---
-// ==========================================
 
-// 1. Unlink all instructors from courses
 app.post('/api/admin/reset/instructor-courses', (req, res) => {
     const sql = "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL";
     db.query(sql, (err, result) => {
@@ -1022,7 +938,6 @@ app.post('/api/admin/reset/instructor-courses', (req, res) => {
     });
 });
 
-// 2. Unlink all courses from sections
 app.post('/api/admin/reset/course-sections', (req, res) => {
     const sql = "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL";
     db.query(sql, (err, result) => {
@@ -1031,7 +946,6 @@ app.post('/api/admin/reset/course-sections', (req, res) => {
     });
 });
 
-// 3. Unlink all students from sections
 app.post('/api/admin/reset/student-sections', (req, res) => {
     const sql = "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL";
     db.query(sql, (err, result) => {
@@ -1040,172 +954,58 @@ app.post('/api/admin/reset/student-sections', (req, res) => {
     });
 });
 
-// 4. Complete Semester Reset
-app.post('/api/admin/reset/semester', (req, res) => {
-    const queries = [
-        "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL",
-        "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL", 
-        "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL"
-    ];
-    
-    let results = { instructorCourses: 0, courseSections: 0, studentSections: 0 };
-    
-    db.query(queries[0], (err, result1) => {
-        if (err) return res.status(500).json({ error: err.message });
-        results.instructorCourses = result1.affectedRows;
-        
-        db.query(queries[1], (err, result2) => {
-            if (err) return res.status(500).json({ error: err.message });
-            results.courseSections = result2.affectedRows;
-            
-            db.query(queries[2], (err, result3) => {
-                if (err) return res.status(500).json({ error: err.message });
-                results.studentSections = result3.affectedRows;
-                res.json({ success: true, message: "Semester reset completed!", details: results });
-            });
-        });
-    });
-});
-
-// 5. Get current linkage statistics
-app.get('/api/admin/reset/stats', (req, res) => {
-    const queries = {
-        instructorCourses: "SELECT COUNT(*) as count FROM courses WHERE instructor_id IS NOT NULL",
-        courseSections: "SELECT COUNT(*) as count FROM courses WHERE section_id IS NOT NULL",
-        studentSections: "SELECT COUNT(*) as count FROM users WHERE role = 'student' AND section_id IS NOT NULL"
-    };
-    
-    db.query(queries.instructorCourses, (err, instResult) => {
-        if (err) return res.status(500).json({ error: err.message });
-        db.query(queries.courseSections, (err, courseResult) => {
-            if (err) return res.status(500).json({ error: err.message });
-            db.query(queries.studentSections, (err, studentResult) => {
-                if (err) return res.status(500).json({ error: err.message });
-                res.json({
-                    instructorCoursesLinked: instResult[0].count,
-                    courseSectionsLinked: courseResult[0].count,
-                    studentSectionsLinked: studentResult[0].count
-                });
-            });
-        });
-    });
-});
-// ==========================================
-// --- SEMESTER RESET ENDPOINTS ---
-// ==========================================
-
-// Get statistics
-app.get('/api/admin/reset/stats', (req, res) => {
-    const queries = {
-        instructorCourses: "SELECT COUNT(*) as count FROM courses WHERE instructor_id IS NOT NULL",
-        courseSections: "SELECT COUNT(*) as count FROM courses WHERE section_id IS NOT NULL",
-        studentSections: "SELECT COUNT(*) as count FROM users WHERE role = 'student' AND section_id IS NOT NULL"
-    };
-    
-    db.query(queries.instructorCourses, (err, instResult) => {
-        if (err) return res.status(500).json({ error: err.message });
-        db.query(queries.courseSections, (err, courseResult) => {
-            if (err) return res.status(500).json({ error: err.message });
-            db.query(queries.studentSections, (err, studentResult) => {
-                if (err) return res.status(500).json({ error: err.message });
-                res.json({
-                    instructorCoursesLinked: instResult[0].count,
-                    courseSectionsLinked: courseResult[0].count,
-                    studentSectionsLinked: studentResult[0].count
-                });
-            });
-        });
-    });
-});
-
-// Reset instructor-course links
-app.post('/api/admin/reset/instructor-courses', (req, res) => {
-    const sql = "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, message: `Unlinked ${result.affectedRows} instructor-course relationships` });
-    });
-});
-
-// Reset course-section links
-app.post('/api/admin/reset/course-sections', (req, res) => {
-    const sql = "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, message: `Unlinked ${result.affectedRows} course-section relationships` });
-    });
-});
-
-// Reset student-section links
-app.post('/api/admin/reset/student-sections', (req, res) => {
-    const sql = "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, message: `Unlinked ${result.affectedRows} student-section relationships` });
-    });
-});
-
-// Complete semester reset
-app.post('/api/admin/reset/semester', (req, res) => {
-    const queries = [
-        "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL",
-        "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL", 
-        "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL"
-    ];
-    
-    let results = { instructorCourses: 0, courseSections: 0, studentSections: 0 };
-    
-    db.query(queries[0], (err, result1) => {
-        if (err) return res.status(500).json({ error: err.message });
-        results.instructorCourses = result1.affectedRows;
-        
-        db.query(queries[1], (err, result2) => {
-            if (err) return res.status(500).json({ error: err.message });
-            results.courseSections = result2.affectedRows;
-            
-            db.query(queries[2], (err, result3) => {
-                if (err) return res.status(500).json({ error: err.message });
-                results.studentSections = result3.affectedRows;
-                res.json({ success: true, message: "Semester reset completed!", details: results });
-            });
-        });
-    });
-});
-// ==========================================
-// --- SEMESTER RESET ENDPOINTS (UPDATED) ---
-// ==========================================
-
-// Clear all evaluations (ratings and comments)
 app.post('/api/admin/reset/evaluations', (req, res) => {
     const sql = "DELETE FROM evaluations";
     db.query(sql, (err, result) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ 
-            success: true, 
-            message: `Cleared ${result.affectedRows} evaluation records` 
+        res.json({ success: true, message: `Cleared ${result.affectedRows} evaluation records` });
+    });
+});
+
+app.post('/api/admin/reset/semester', (req, res) => {
+    const queries = [
+        "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL",
+        "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL", 
+        "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL"
+    ];
+    
+    let results = { instructorCourses: 0, courseSections: 0, studentSections: 0 };
+    
+    db.query(queries, (err, result1) => {
+        if (err) return res.status(500).json({ error: err.message });
+        results.instructorCourses = result1.affectedRows;
+        
+        db.query(queries[1], (err, result2) => {
+            if (err) return res.status(500).json({ error: err.message });
+            results.courseSections = result2.affectedRows;
+            
+            db.query(queries[2], (err, result3) => {
+                if (err) return res.status(500).json({ error: err.message });
+                results.studentSections = result3.affectedRows;
+                res.json({ success: true, message: "Semester reset completed!", details: results });
+            });
         });
     });
 });
 
-// Complete System Reset (including evaluations)
 app.post('/api/admin/reset/complete-system', (req, res) => {
     const queries = [
-        "DELETE FROM evaluations",                                    // Clear all evaluations
-        "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL",  // Unlink instructors
-        "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL",        // Unlink course sections
-        "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL"  // Unlink student sections
+        "DELETE FROM evaluations",
+        "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL",
+        "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL",
+        "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL"
     ];
     
     let results = { evaluations: 0, instructorCourses: 0, courseSections: 0, studentSections: 0 };
     
-    db.query(queries[0], (err, result1) => {
+    db.query(queries, (err, result1) => {
         if (err) return res.status(500).json({ error: err.message });
         results.evaluations = result1.affectedRows;
         
         db.query(queries[1], (err, result2) => {
             if (err) return res.status(500).json({ error: err.message });
             results.instructorCourses = result2.affectedRows;
-            
+
             db.query(queries[2], (err, result3) => {
                 if (err) return res.status(500).json({ error: err.message });
                 results.courseSections = result3.affectedRows;
@@ -1225,205 +1025,8 @@ app.post('/api/admin/reset/complete-system', (req, res) => {
     });
 });
 
-// Get updated statistics (including evaluation count)
-app.get('/api/admin/reset/stats', (req, res) => {
-    const queries = {
-        evaluations: "SELECT COUNT(*) as count FROM evaluations",
-        instructorCourses: "SELECT COUNT(*) as count FROM courses WHERE instructor_id IS NOT NULL",
-        courseSections: "SELECT COUNT(*) as count FROM courses WHERE section_id IS NOT NULL",
-        studentSections: "SELECT COUNT(*) as count FROM users WHERE role = 'student' AND section_id IS NOT NULL"
-    };
-    
-    db.query(queries.evaluations, (err, evalResult) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        db.query(queries.instructorCourses, (err, instResult) => {
-            if (err) return res.status(500).json({ error: err.message });
-            
-            db.query(queries.courseSections, (err, courseResult) => {
-                if (err) return res.status(500).json({ error: err.message });
-                
-                db.query(queries.studentSections, (err, studentResult) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    
-                    res.json({
-                        evaluations: evalResult[0].count,
-                        instructorCoursesLinked: instResult[0].count,
-                        courseSectionsLinked: courseResult[0].count,
-                        studentSectionsLinked: studentResult[0].count
-                    });
-                });
-            });
-        });
-    });
-});
-// ==========================================
-// --- SEMESTER RESET ENDPOINTS ---
-// ==========================================
-
-// Clear all evaluations (ratings and comments)
-app.post('/api/admin/reset/evaluations', (req, res) => {
-    const sql = "DELETE FROM evaluations";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Error clearing evaluations:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Cleared ${result.affectedRows} evaluation records` 
-        });
-    });
-});
-
-// Reset instructor-course links
-app.post('/api/admin/reset/instructor-courses', (req, res) => {
-    const sql = "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Error resetting instructor-courses:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Unlinked ${result.affectedRows} instructor-course relationships` 
-        });
-    });
-});
-
-// Reset course-section links
-app.post('/api/admin/reset/course-sections', (req, res) => {
-    const sql = "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Error resetting course-sections:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Unlinked ${result.affectedRows} course-section relationships` 
-        });
-    });
-});
-
-// Reset student-section links
-app.post('/api/admin/reset/student-sections', (req, res) => {
-    const sql = "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL";
-    db.query(sql, (err, result) => {
-        if (err) {
-            console.error("Error resetting student-sections:", err);
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ 
-            success: true, 
-            message: `Unlinked ${result.affectedRows} student-section relationships` 
-        });
-    });
-});
-
-// Complete system reset (all in one)
-app.post('/api/admin/reset/complete-system', (req, res) => {
-    const queries = [
-        { sql: "DELETE FROM evaluations", name: "evaluations" },
-        { sql: "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL", name: "instructorCourses" },
-        { sql: "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL", name: "courseSections" },
-        { sql: "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL", name: "studentSections" }
-    ];
-    
-    let results = { evaluations: 0, instructorCourses: 0, courseSections: 0, studentSections: 0 };
-    let completed = 0;
-    
-    queries.forEach((query) => {
-        db.query(query.sql, (err, result) => {
-            if (err) {
-                console.error(`Error resetting ${query.name}:`, err);
-            } else {
-                results[query.name] = result.affectedRows;
-            }
-            completed++;
-            
-            if (completed === queries.length) {
-                res.json({ 
-                    success: true, 
-                    message: "Complete system reset completed!",
-                    details: results 
-                });
-            }
-        });
-    });
-});
-
-// Get statistics
-app.get('/api/admin/reset/stats', (req, res) => {
-    const queries = {
-        evaluations: "SELECT COUNT(*) as count FROM evaluations",
-        instructorCourses: "SELECT COUNT(*) as count FROM courses WHERE instructor_id IS NOT NULL",
-        courseSections: "SELECT COUNT(*) as count FROM courses WHERE section_id IS NOT NULL",
-        studentSections: "SELECT COUNT(*) as count FROM users WHERE role = 'student' AND section_id IS NOT NULL"
-    };
-    
-    db.query(queries.evaluations, (err, evalResult) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        db.query(queries.instructorCourses, (err, instResult) => {
-            if (err) return res.status(500).json({ error: err.message });
-            
-            db.query(queries.courseSections, (err, courseResult) => {
-                if (err) return res.status(500).json({ error: err.message });
-                
-                db.query(queries.studentSections, (err, studentResult) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    
-                    res.json({
-                        evaluations: evalResult[0].count,
-                        instructorCoursesLinked: instResult[0].count,
-                        courseSectionsLinked: courseResult[0].count,
-                        studentSectionsLinked: studentResult[0].count
-                    });
-                });
-            });
-        });
-    });
-});
-// Basic semester reset (without evaluations)
-app.post('/api/admin/reset/semester', (req, res) => {
-    const queries = [
-        "UPDATE courses SET instructor_id = NULL WHERE instructor_id IS NOT NULL",
-        "UPDATE courses SET section_id = NULL WHERE section_id IS NOT NULL", 
-        "UPDATE users SET section_id = NULL WHERE role = 'student' AND section_id IS NOT NULL"
-    ];
-    
-    let results = { instructorCourses: 0, courseSections: 0, studentSections: 0 };
-    let completed = 0;
-    
-    db.query(queries[0], (err, result1) => {
-        if (err) return res.status(500).json({ error: err.message });
-        results.instructorCourses = result1.affectedRows;
-        completed++;
-        
-        db.query(queries[1], (err, result2) => {
-            if (err) return res.status(500).json({ error: err.message });
-            results.courseSections = result2.affectedRows;
-            completed++;
-            
-            db.query(queries[2], (err, result3) => {
-                if (err) return res.status(500).json({ error: err.message });
-                results.studentSections = result3.affectedRows;
-                completed++;
-                
-                res.json({ 
-                    success: true, 
-                    message: "Semester reset completed!",
-                    details: results 
-                });
-            });
-        });
-    });
-});
-
 // ==========================================
 // --- START SERVER ---
 // ==========================================
-
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
